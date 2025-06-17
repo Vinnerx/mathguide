@@ -1,0 +1,512 @@
+import React, { useState } from 'react';
+
+// Data structure for the feedback guide, extracted from the PDF.
+// This data will be used as context for the AI model.
+const categories = {
+    A: {
+        title: "A: Fokus på att förstå problemet",
+        displayTitle: "Fokus på att förstå problemet", // Explicit title for main view
+        scenarios: {
+            A1: {
+                description: "Eleven förstår inte uppgiften.",
+                feedback: "A1i: Vad är det för typ av uppgift? Vad är det för problem du ska lösa? Vad är det för svar du ska ge?",
+                detail: "{Påbörjar utvärdering av uppgiftsformuleringen}"
+            },
+            A2: {
+                description: "Eleven har inte börjat utforska.",
+                feedback: "A2i: Vad handlar uppgiften om? Vad är det du ska räkna ut? Vilken information finns det i uppgiften?",
+                detail: "{Ger förslag på hur man kan börja utforska}"
+            },
+            A3: {
+                description: "Eleven har inte formulerat en lösningsidé.",
+                feedback: "A3i: Vad är det du ska göra för att lösa uppgiften? Vad kan vara en första tanke om hur du ska gå vidare?",
+                detail: "{Ger förslag och påbörjar utforskning}"
+            },
+            A4: {
+                description: "Eleven har matematiska förkunskaper som saknas för att tolka uppgiften.",
+                feedback: "A4i: Vad är det du vet om ___? Vad är det du kan om ___ sedan tidigare?",
+                detail: "{Ger förslag och påbörjar utforskning av matematiska förkunskaper}"
+            }
+        }
+    },
+    B: {
+        title: "B: Fokus på att utforska",
+        displayTitle: "Fokus på att utforska", // Explicit title for main view
+        scenarios: {
+            B1: {
+                description: "Eleven har inte upptäckt en avgörande del av problemet.",
+                feedback: "B1i: Har du tänkt på att ___? Finns det något mer som kan vara viktigt att tänka på här?",
+                detail: "{Ger förslag på vad eleven ska upptäcka och påbörjar en utvärdering}"
+            },
+            B2: {
+                description: "Eleven gör inte tillräckligt många undersökningar eller testar inte tillräckligt många specialfall.",
+                feedback: "B2i: Har du undersökt om ___? Har du testat att ___?",
+                detail: "{Ger förslag på fler undersökningar och påbörjar utvärdering}"
+            },
+            B3: {
+                description: "Eleven har en lösningsidé men utforskar inte mer.",
+                feedback: "B3i: Du säger att: ___. Hur kan du kontrollera om det stämmer med din lösningsidé?",
+                detail: "{Ger förslag och påbörjar utvärdering mot sin lösningsidé}"
+            },
+            B4: {
+                description: "Eleven har matematiska förkunskaper som saknas för att utforska.",
+                feedback: "B4i: Hur brukar du göra när du löser den här typen av problem? Vad är det du vet om ___ som kan hjälpa dig här?",
+                detail: "{Ger förslag och påbörjar utforskning av matematiska förkunskaper}"
+            }
+        }
+    },
+    C: {
+        title: "C: Fokus på att utvärdera",
+        displayTitle: "Fokus på att utvärdera", // Explicit title for main view
+        scenarios: {
+            C1: {
+                description: "Eleven utvärderar inte sin lösning mot uppgiftsformuleringen.",
+                feedback: "C1i: Du säger att: ___. Hur kan du kontrollera om det stämmer med uppgiftsformuleringen?",
+                detail: "{Ger förslag och påbörjar utvärdering mot uppgiftsformuleringen}"
+            },
+            C2: {
+                description: "Eleven utvärderar inte mot sin utforskning.",
+                feedback: "C2i: Du säger att: ___. Hur kan du kontrollera om det stämmer med [del av elevens utforskning]?",
+                detail: "{Ger förslag och påbörjar utvärdering mot (del av) utforskning}"
+            },
+            C3: {
+                description: "Eleven utvärderar inte mot sin lösningsidé.",
+                feedback: "C3i: Du säger att: ___. Hur kan du kontrollera om det stämmer med din idé att ___?",
+                detail: "{Ger förslag och påbörjar utvärdering mot sin egen lösningsidé}"
+            },
+            CX: {
+                description: "Eleven utvärderar inte mot matematiska förkunskaper.",
+                feedback: "CXi: Du säger att: ___. Hur kan du kontrollera om det stämmer med det du vet om ___?",
+                detail: "{Ger förslag och påbörjar utvärdering mot matematiska förkunskaper}"
+            }
+        }
+    },
+    D: {
+        title: "D: Eleven har ett fel och är efter ovanstående återkoppling fortfarande övertygad om att allt är rätt.",
+        displayTitle: "Fortsatt osäker: Fel (övertygad om rätt)", // Explicit title for main view
+        scenarios: {
+            D1: {
+                description: "Eleven har ett fel och är efter ovanstående återkoppling fortfarande övertygad om att allt är rätt.",
+                feedback: "Di: Du har en bra lösning, men det är någonting som inte riktigt stämmer. Försök hitta det.",
+                detail: "{Påbörjar utvärdering av lösningen}"
+            }
+        }
+    },
+    E: {
+        title: "E: Eleven har utvärderat med bra argument, men söker fortfarande bekräftelse av läraren.",
+        displayTitle: "Fortsatt osäker: Söker bekräftelse (trots bra argument)", // Explicit title for main view
+        scenarios: {
+            E1: {
+                description: "Eleven har utvärderat med bra argument, men söker fortfarande bekräftelse av läraren.",
+                feedback: "Ei: Du har bra argument för din lösning. Du har övertygat mig om att den stämmer.",
+                detail: "{Blir själv övertygad om att lösningen stämmer}"
+            }
+        }
+    }
+};
+
+// Complementary principles for mathematical reasoning feedback
+const mathReasoningPrinciples = `
+Kompletterande principer för matematiskt resonemang:
+1.  **Analysera och förstå problemet:** Förmåga att tolka problem, identifiera relevanta matematiska begrepp och relationer, samt att bryta ner problemet i mindre delar.
+    * Exempel på frågor: "Hur har du tolkat vad som efterfrågas i uppgiften?", "Vilka matematiska begrepp eller samband tror du är viktiga här?", "Kan du dela upp problemet i mindre steg?"
+2.  **Resonera matematiskt:** Förmåga att följa, föra och bedöma matematiska resonemang; att använda logiska steg och argument.
+    * Exempel på frågor: "Kan du förklara hur du tänkte när du tog det här steget?", "Vilka matematiska regler eller principer använder du här?", "Hur kan du vara säker på att ditt resonemang är logiskt?"
+3.  **Välja och använda metoder:** Förmåga att välja lämpliga matematiska metoder och strategier för att lösa problem.
+    * Exempel på frågor: "Finns det någon annan metod du skulle kunna använda för att lösa detta?", "Varför valde du just den här metoden?", "Hur vet du att den här metoden är lämplig för problemet?"
+4.  **Kommunicera matematiska idéer:** Förmåga att kommunicera matematiska idéer, frågeställningar och lösningar muntligt och skriftligt med olika uttrycksformer.
+    * Exempel på frågor: "Hur skulle du förklara din lösning för en klasskamrat?", "Kan du visa dina beräkningar tydligare?", "Vilka matematiska symboler eller termer kan du använda för att förtydliga din lösning?"
+5.  **Utvärdera och reflektera:** Förmåga att utvärdera lösningens rimlighet och att reflektera över processen.
+    * Exempel på frågor: "Verkar ditt svar rimligt i förhållande till uppgiften?", "Hur skulle du kunna kontrollera din lösning?", "Vad har du lärt dig av att lösa den här uppgiften?"
+`;
+
+
+const App = () => {
+    // State to manage the overall mode: 'guide' for interactive guide, 'ai-bot' for AI assistant
+    const [mode, setMode] = useState('guide'); // Default mode is the interactive guide
+
+    // States for the interactive guide part
+    const [view, setView] = useState('main'); // 'main', 'scenarios', or 'feedback'
+    const [currentCategoryKey, setCurrentCategoryKey] = useState(null);
+    const [currentScenarioKey, setCurrentScenarioKey] = useState(null);
+
+    // States for the AI bot part
+    const [teacherInput, setTeacherInput] = useState('');
+    const [chatHistory, setChatHistory] = useState([]); // Stores [{ role: 'user' | 'model', parts: [{ text: string }] }]
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
+    // New state for selecting AI feedback model
+    const [aiFeedbackModel, setAiFeedbackModel] = useState('standard'); // 'standard' or 'math-reasoning'
+
+    // Convert the categories object into a flat, readable string format
+    // to include in the LLM prompt as context.
+    const guideContext = Object.keys(categories).map(categoryKey => {
+        const category = categories[categoryKey];
+        let categoryString = `${categoryKey}: ${category.title}\n`;
+        for (const scenarioKey in category.scenarios) {
+            const scenario = category.scenarios[scenarioKey];
+            categoryString += `  ${scenarioKey}: ${scenario.description}\n`;
+            categoryString += `    Förslag på återkoppling: ${scenario.feedback}\n`;
+            categoryString += `    Detalj: ${scenario.detail}\n`;
+        }
+        return categoryString;
+    }).join('\n\n');
+
+    const generateFeedback = async () => {
+        if (!teacherInput.trim() && chatHistory.length === 0) { // Only require input for the first message
+            setError('Vänligen beskriv elevens situation innan du frågar AI:n.');
+            return;
+        }
+
+        setLoading(true);
+        setError(''); // Clear any previous errors
+
+        const newChatEntry = { role: "user", parts: [{ text: teacherInput }] };
+        const updatedChatHistory = [...chatHistory, newChatEntry];
+        setChatHistory(updatedChatHistory);
+        setTeacherInput(''); // Clear input field immediately
+
+        try {
+            // Determine the full context for the prompt based on the selected AI feedback model
+            let fullContext = `Du är en hjälpsam AI-assistent för lärare. Din uppgift är att föreslå lämplig återkoppling till elever som problemlösar, baserat på den medföljande lärarguiden. Alltid svara på svenska.`;
+
+            // Add the standard guide context
+            fullContext += `\n\nLärarguiden:\n${guideContext}`;
+
+            // Add mathematical reasoning principles if selected
+            if (aiFeedbackModel === 'math-reasoning') {
+                fullContext += `\n\n${mathReasoningPrinciples}`;
+                fullContext += `\n\nFokusera extra på att ge återkoppling som stödjer elevens matematiska resonemangsförmåga, baserat på principerna ovan och lärarguiden.`;
+            }
+
+            // Instruct the AI on how to respond to the initial query or follow-up
+            const initialInstruction = `Baserat på informationen ovan och konversationen hittills, vilken återkoppling ska läraren ge till en elev i den beskrivna situationen eller som svar på den senaste följdfrågan? Identifiera vilken kategori/scenario som bäst matchar om relevant. Svara kortfattat och fokusera på återkopplingsfrågan/förslaget eller en vidare guidning.`;
+
+            // The prompt for the first user query includes the full context and initial instruction.
+            // Subsequent queries will rely on the chat history for context.
+            const payload = {
+                contents: [
+                    { role: "user", parts: [{ text: fullContext + "\n\n" + initialInstruction }] },
+                    ...updatedChatHistory // Send the full updated history
+                ]
+            };
+
+            const apiKey = ""; // Canvas environment provides this
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(`API fel: ${response.status} ${response.statusText} - ${errorData.error?.message || 'Okänt fel'}`);
+            }
+
+            const result = await response.json();
+
+            if (result.candidates && result.candidates.length > 0 &&
+                result.candidates[0].content && result.candidates[0].content.parts &&
+                result.candidates[0].content.parts.length > 0) {
+                const text = result.candidates[0].content.parts[0].text;
+                setChatHistory(prevHistory => [...prevHistory, { role: "model", parts: [{ text: text }] }]);
+            } else {
+                setError('Fick inget meningsfullt svar från AI:n. Försök igen.');
+                console.warn('Oväntad AI-svarsstruktur:', result);
+                // If error, revert the last user message from history as it didn't get a response
+                setChatHistory(prevHistory => prevHistory.slice(0, prevHistory.length - 1));
+            }
+        } catch (err) {
+            console.error('Fel vid anrop till Gemini API:', err);
+            setError(`Kunde inte generera återkoppling: ${err.message}. Kontrollera din nätverksanslutning eller försök igen.`);
+            // If error, revert the last user message from history as it didn't get a response
+            setChatHistory(prevHistory => prevHistory.slice(0, prevHistory.length - 1));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Functions for the interactive guide part (unchanged from previous version)
+    const showScenarios = (categoryKey) => {
+        setCurrentCategoryKey(categoryKey);
+        setView('scenarios');
+    };
+
+    const showFeedback = (scenarioKey) => {
+        setCurrentScenarioKey(scenarioKey);
+        setView('feedback');
+    };
+
+    const goBackToMain = () => {
+        setCurrentCategoryKey(null);
+        setCurrentScenarioKey(null);
+        setView('main');
+    };
+
+    const goBackToScenarios = () => {
+        setCurrentCategoryKey(null);
+        setView('scenarios');
+    };
+
+    // Render methods for the interactive guide (unchanged from previous version)
+    const renderMainGuideView = () => (
+        <div className="main-view">
+            <h2 className="text-xl md:text-2xl font-bold mb-6 text-blue-800">Välj en kategori för att se specifika återkopplingsscenarier:</h2>
+            <ul className="category-list space-y-4">
+                {Object.keys(categories).map(key => {
+                    const category = categories[key];
+                    if (!category) {
+                        console.error(`Kategori med nyckel ${key} saknas eller är ogiltig.`);
+                        return null;
+                    }
+                    return (
+                        <li
+                            key={key}
+                            onClick={() => showScenarios(key)}
+                            className="bg-blue-50 hover:bg-blue-100 p-4 rounded-lg shadow-sm cursor-pointer transition duration-200 ease-in-out flex items-center justify-between"
+                        >
+                            <span className="font-semibold text-lg text-blue-700">{key}:</span>
+                            <span className="flex-grow ml-4 text-gray-800">
+                                {category.displayTitle}
+                            </span>
+                            <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg>
+                        </li>
+                    );
+                })}
+            </ul>
+        </div>
+    );
+
+    const renderScenariosGuideView = () => {
+        const category = categories[currentCategoryKey];
+        if (!category) {
+            console.error(`Ingen kategori hittades för nyckel: ${currentCategoryKey}`);
+            return (
+                <div className="text-red-600 text-center text-xl">
+                    Kunde inte ladda scenarier för vald kategori.
+                    <button onClick={goBackToMain} className="back-button mt-4 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700">
+                        Tillbaka till kategorier
+                    </button>
+                </div>
+            );
+        }
+
+        return (
+            <div className="scenario-view">
+                <button
+                    onClick={goBackToMain}
+                    className="back-button mb-6 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition duration-200 ease-in-out flex items-center"
+                >
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    Tillbaka till kategorier
+                </button>
+                <h2 className="text-xl md:text-2xl font-bold mb-6 text-blue-800">{category.title}</h2>
+                <ul className="scenario-list space-y-4">
+                    {Object.keys(category.scenarios).map(key => {
+                        const scenario = category.scenarios[key];
+                        if (!scenario) {
+                            console.error(`Scenario med nyckel ${key} saknas eller är ogiltig i kategori ${currentCategoryKey}.`);
+                            return null;
+                        }
+                        return (
+                            <li
+                                key={key}
+                                onClick={() => showFeedback(key)}
+                                className="bg-green-50 hover:bg-green-100 p-4 rounded-lg shadow-sm cursor-pointer transition duration-200 ease-in-out flex items-center justify-between"
+                            >
+                                <span className="font-semibold text-lg text-green-700">{key}:</span>
+                                <span className="flex-grow ml-4 text-gray-800">{scenario.description}</span>
+                                <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg>
+                            </li>
+                        );
+                    })}
+                </ul>
+            </div>
+        );
+    };
+
+    const renderFeedbackGuideView = () => {
+        const category = categories[currentCategoryKey];
+        const scenario = category?.scenarios[currentScenarioKey];
+        if (!scenario) {
+            console.error(`Inget scenario hittades för nyckel: ${currentScenarioKey} i kategori ${currentCategoryKey}.`);
+            return (
+                <div className="text-red-600 text-center text-xl">
+                    Kunde inte ladda återkoppling för valt scenario.
+                    <button onClick={goBackToScenarios} className="back-button mt-4 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700">
+                        Tillbaka till scenarion
+                    </button>
+                </div>
+            );
+        }
+
+        return (
+            <div className="feedback-view">
+                <button
+                    onClick={goBackToScenarios}
+                    className="back-button mb-6 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition duration-200 ease-in-out flex items-center"
+                >
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    Tillbaka till scenarion
+                </button>
+                <h3 className="text-xl md:text-2xl font-bold mb-4 text-purple-800">{currentScenarioKey}: {scenario.description}</h3>
+                <div className="feedback-item bg-white border-l-4 border-purple-500 p-6 rounded-lg shadow-md">
+                    <p className="text-gray-800 text-lg mb-2"><span className="font-semibold text-purple-700">Återkoppling:</span> {scenario.feedback}</p>
+                    <p className="text-gray-600 text-sm italic"><span className="font-semibold text-purple-700">Detalj:</span> {scenario.detail}</p>
+                </div>
+            </div>
+        );
+    };
+
+    // Render method for the AI bot part
+    const renderAIBotView = () => (
+        <div className="ai-bot-view">
+            <div className="mb-4">
+                <label htmlFor="ai-model-select" className="block text-gray-700 text-sm font-bold mb-2">Välj AI-modell/fokusområde:</label>
+                <select
+                    id="ai-model-select"
+                    value={aiFeedbackModel}
+                    onChange={(e) => {
+                        setAiFeedbackModel(e.target.value);
+                        setChatHistory([]); // Clear chat history when changing model/focus
+                        setError(''); // Clear any errors
+                        setTeacherInput('');
+                    }}
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                >
+                    <option value="standard">Standard Lärarguide</option>
+                    <option value="math-reasoning">Matematisk Resonemangsförmåga</option>
+                </select>
+            </div>
+
+            <div className="chat-history-container bg-gray-50 p-4 rounded-md h-64 overflow-y-auto mb-4 border border-gray-200">
+                {chatHistory.length === 0 ? (
+                    <p className="text-gray-500 italic">Starta konversationen genom att beskriva elevens situation.</p>
+                ) : (
+                    chatHistory.map((msg, index) => (
+                        <div key={index} className={`mb-3 p-2 rounded-lg ${msg.role === 'user' ? 'bg-blue-100 self-end text-right' : 'bg-green-100 self-start text-left'}`}>
+                            <p className="font-semibold text-gray-700 mb-1">{msg.role === 'user' ? 'Du:' : 'AI:'}</p>
+                            <p className="whitespace-pre-wrap">{msg.parts[0].text}</p>
+                        </div>
+                    ))
+                )}
+                {loading && (
+                    <div className="flex items-center justify-center py-2">
+                        <svg className="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span className="ml-2 text-gray-600">AI tänker...</span>
+                    </div>
+                )}
+            </div>
+
+            <textarea
+                className="w-full p-3 border border-gray-300 rounded-md mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                rows="3" // Reduced rows to make space for chat history
+                placeholder="Beskriv situationen eller ställ en följdfråga..."
+                value={teacherInput}
+                onChange={(e) => setTeacherInput(e.target.value)}
+                onKeyPress={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) { // Send on Enter, allow Shift+Enter for new line
+                        e.preventDefault();
+                        generateFeedback();
+                    }
+                }}
+            ></textarea>
+
+            <div className="flex justify-between items-center mb-4">
+                <button
+                    onClick={generateFeedback}
+                    disabled={loading || !teacherInput.trim()}
+                    className="bg-blue-600 text-white font-bold py-2 px-4 rounded-md hover:bg-blue-700 transition duration-300 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                >
+                    {loading ? (
+                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    ) : (
+                        'Skicka till AI'
+                    )}
+                </button>
+                <button
+                    onClick={() => { setChatHistory([]); setTeacherInput(''); setError(''); }} // Removed setAiResponse
+                    className="bg-gray-400 text-white font-bold py-2 px-4 rounded-md hover:bg-gray-500 transition duration-300 ease-in-out ml-4"
+                >
+                    Starta ny konversation
+                </button>
+            </div>
+
+
+            {error && (
+                <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mt-4" role="alert">
+                    <strong className="font-bold">Fel!</strong>
+                    <span className="block sm:inline"> {error}</span>
+                </div>
+            )}
+            {/* aiResponse is no longer used directly, chatHistory renders everything */}
+
+            <div className="mt-8 pt-6 border-t border-gray-200">
+                <p className="text-sm text-gray-500">
+                    Denna AI-funktion använder Google Gemini API för att generera återkoppling baserat på den inbyggda lärarguiden och valda fokusområden.
+                    Observera att AI-genererade svar är förslag och bör alltid granskas av en mänsklig lärare.
+                </p>
+            </div>
+        </div>
+    );
+
+    // Main App component rendering logic
+    if (!categories || Object.keys(categories).length === 0) {
+        console.error("Kategoridatan är tom eller saknas helt.");
+        return (
+            <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+                <div className="text-red-600 text-center text-xl">
+                    Kunde inte ladda lärarguiden. Datastruktur saknas eller är ogiltig.
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4 font-sans antialiased">
+            <div className="bg-white p-6 md:p-8 rounded-lg shadow-xl w-full max-w-2xl">
+                <h1 className="text-2xl md:text-3xl font-extrabold text-center mb-8 text-blue-900 leading-tight">
+                    Lärarguide för att stödja elevers problemlösning
+                </h1>
+
+                {/* Mode selection buttons */}
+                <div className="flex justify-center mb-6 space-x-4">
+                    <button
+                        onClick={() => setMode('guide')}
+                        className={`px-6 py-2 rounded-md font-semibold transition duration-200 ease-in-out ${mode === 'guide' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                    >
+                        Lärarguide
+                    </button>
+                    <button
+                        onClick={() => setMode('ai-bot')}
+                        className={`px-6 py-2 rounded-md font-semibold transition duration-200 ease-in-out ${mode === 'ai-bot' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                    >
+                        AI-bot
+                    </button>
+                </div>
+
+                {/* Conditional rendering based on mode */}
+                {mode === 'guide' && (
+                    <>
+                        {view === 'main' && renderMainGuideView()}
+                        {view === 'scenarios' && renderScenariosGuideView()}
+                        {view === 'feedback' && renderFeedbackGuideView()}
+                    </>
+                )}
+
+                {mode === 'ai-bot' && renderAIBotView()}
+
+            </div>
+        </div>
+    );
+};
+
+export default App;
